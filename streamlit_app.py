@@ -23,14 +23,13 @@ if f_ssasur:
     except Exception as e:
         st.error(f"Error SSASUR: {e}")
 
-# --- 3. PROCESAMIENTO CENABAST (Buscador Universal) ---
+# --- 3. PROCESAMIENTO CENABAST (Buscador Flexible) ---
 if f_icp:
     try:
-        # Cargamos el archivo completo sin importar los encabezados
         f_icp.seek(0)
         df_full = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', header=None, on_bad_lines='skip')
         
-        # Buscamos la fila donde aparece la palabra "NOMBRE GEN" o "PRODUCTO"
+        # Localizamos la fila de encabezados
         row_idx = None
         for i, row in df_full.iterrows():
             if any('NOMBRE GEN' in str(cell).upper() or 'PRODUCTO' in str(cell).upper() for cell in row):
@@ -38,43 +37,53 @@ if f_icp:
                 break
         
         if row_idx is not None:
-            # Re-cargamos la tabla desde esa fila específica
             f_icp.seek(0)
             data_icp = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', skiprows=row_idx, on_bad_lines='skip')
             data_icp.columns = [str(c).upper().strip() for c in data_icp.columns]
             st.success("✅ ICP Cenabast sincronizado")
         else:
-            st.error("🚨 No se detectó la columna 'NOMBRE GEN'. Asegúrate de guardar el ICP como CSV.")
+            st.error("🚨 No se detectó la tabla. Revisa que el archivo sea el CSV correcto.")
     except Exception as e:
         st.error(f"Error de lectura: {e}")
 
-# --- 4. CRUCE Y DASHBOARD ---
+# --- 4. CRUCE INTELIGENTE Y DASHBOARD ---
 if data_ssasur is not None:
     st.divider()
     resumen = data_ssasur.copy()
     resumen['Producto'] = resumen['Producto'].str.upper().str.strip()
-    resumen['Estado Cenabast'] = "Sin información"
 
     if data_icp is not None:
         try:
-            # Identificación dinámica de columnas de cruce
+            # Columnas clave del ICP
             col_prod_icp = [c for c in data_icp.columns if any(k in c for k in ['NOMBRE', 'GENERICO', 'PRODUCTO'])][0]
             col_est_icp = [c for c in data_icp.columns if any(k in c for k in ['ESTADO', 'SEMAFORO', 'STATUS'])][0]
             
-            # Limpieza para el cruce
+            # Limpieza exhaustiva de datos de Cenabast
             data_icp[col_prod_icp] = data_icp[col_prod_icp].astype(str).str.upper().str.strip()
             
-            # Función de búsqueda por palabras clave
-            def buscar_estado(prod_ssasur):
-                base = " ".join(str(prod_ssasur).split()[:2])
-                match = data_icp[data_icp[col_prod_icp].str.contains(base, na=False, regex=False)]
-                return match[col_est_icp].iloc[0] if not match.empty else "Pendiente"
+            # Función de búsqueda "Fuzzy" (Coincidencia por la primera palabra clave)
+            def buscar_estado_flexible(prod_ssasur):
+                # Sacamos solo la primera palabra (ej: "FLUOXETINA") para máxima compatibilidad
+                palabra_clave = str(prod_ssasur).split()[0]
+                mask = data_icp[col_prod_icp].str.contains(palabra_clave, na=False, regex=False)
+                match = data_icp[mask]
+                
+                if not match.empty:
+                    # Si hay varias, priorizamos la que tenga el nombre más largo (más específica)
+                    return match.sort_values(by=col_prod_icp, key=lambda x: x.str.len(), ascending=False)[col_est_icp].iloc[0]
+                return "No en ICP"
 
-            resumen['Estado Cenabast'] = resumen['Producto'].apply(buscar_estado)
+            resumen['Estado Cenabast'] = resumen['Producto'].apply(buscar_estado_flexible)
         except:
-            st.warning("⚠️ Columnas identificadas pero formato de datos inusual.")
+            resumen['Estado Cenabast'] = "Error en Cruce"
 
-    st.subheader("📋 Gestión de Stock Crítico")
-    cols_f = ['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Cenabast']
-    st.dataframe(resumen[cols_f].sort_values('Saldo Meses').style.applymap(
-        lambda x: 'background-color: #ff4b4b; color: white' if isinstance(x, float) and x < 0.5 else '', subset=['Saldo Meses']))
+    st.subheader("📋 Gestión de Stock Crítico - Hospital Puerto Saavedra")
+    cols_v = ['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Cenabast']
+    
+    # Formateo visual: Rojo para stock crítico (< 0.5 meses)
+    st.dataframe(
+        resumen[cols_v].sort_values('Saldo Meses').style.applymap(
+            lambda x: 'background-color: #ff4b4b; color: white' if isinstance(x, float) and x < 0.5 else '', 
+            subset=['Saldo Meses']
+        )
+    )
