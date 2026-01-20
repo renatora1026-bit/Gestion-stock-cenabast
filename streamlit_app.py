@@ -2,25 +2,40 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- 1. CONFIGURACIÓN DE CONEXIÓN (NOMBRE COMPLETO PARA EVITAR 404) ---
+# --- 1. CONFIGURACIÓN DE CONEXIÓN ROBUSTA ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 
-# Usamos el nombre técnico completo que requiere la API v1beta
-MODELO_ESTABLE = "models/gemini-1.5-flash-latest"
+def conectar_con_mejor_modelo():
+    # Probamos nombres técnicos completos para saltar el error 404
+    variantes = [
+        "gemini-1.5-flash", 
+        "models/gemini-1.5-flash", 
+        "gemini-1.5-flash-latest",
+        "models/gemini-pro"
+    ]
+    for v in variantes:
+        try:
+            m = genai.GenerativeModel(v)
+            # Prueba de pulso
+            m.generate_content("ok", generation_config={"max_output_tokens": 1})
+            return m
+        except:
+            continue
+    return None
 
 st.set_page_config(page_title="Radar Semántico Saavedra", layout="wide")
 st.title("🧠 Radar IA: Pensamiento Farmacológico")
-st.markdown("Hospital Puerto Saavedra | Gestión Semántica de Stock")
+st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
 
 # --- 2. CARGA DE ARCHIVOS ---
-f_ssasur = st.file_uploader("📥 1. Cargar SSASUR", type=["csv"])
-f_icp = st.file_uploader("📦 2. Cargar CENABAST", type=["csv"])
+col1, col2 = st.columns(2)
+with col1: f_ssasur = st.file_uploader("📥 1. Sube SSASUR", type=["csv"])
+with col2: f_icp = st.file_uploader("📦 2. Sube CENABAST", type=["csv"])
 
 if f_ssasur and f_icp:
     st.success("✅ Archivos listos para el paso de indexación.")
     
-    # --- 3. EL PASO EXTRA: PENSAMIENTO IA ---
     if st.button("🚀 Iniciar Cruce de Conceptos Inteligentes"):
         with st.spinner('🤖 Gemini creando base de datos semántica...'):
             try:
@@ -29,32 +44,33 @@ if f_ssasur and f_icp:
                 df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
                 criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(12)
                 
-                # Leemos CENABAST como conocimiento bruto
-                texto_cenabast = f_icp.getvalue().decode('latin1', errors='ignore')[:30000]
+                # Leemos CENABAST como conocimiento bruto (Paso solicitado por Renato)
+                texto_cenabast = f_icp.getvalue().decode('latin1', errors='ignore')[:25000]
 
-                # Llamada a la IA
-                model = genai.GenerativeModel(MODELO_ESTABLE)
+                # Intentar conexión
+                ia = conectar_con_mejor_modelo()
                 
-                prompt = f"""
-                Actúa como Jefe de Farmacia. Tienes dos tareas:
-                
-                1. ANALIZAR CONTEXTO: En este texto de CENABAST:
-                {texto_cenabast}
-                Identifica qué nombres corresponden a fármacos y sus estados.
-                
-                2. CRUCE SEMÁNTICO: Busca equivalencias para estos críticos:
-                {criticos['Producto'].tolist()}
-                
-                Usa tu conocimiento médico: si el hospital pide 'AA SALICILICO', busca 'Aspirina' o 'AAS'. 
-                Si pide 'PENICILINA G SODICA', busca variantes inyectables.
-                
-                ENTREGA: Una tabla con: Producto Hospital | Hallazgo Semántico | Estado Real.
-                """
-
-                response = model.generate_content(prompt)
-                
-                st.subheader("📋 Informe de Disponibilidad (Cruce Inteligente)")
-                st.markdown(response.text)
+                if ia:
+                    prompt = f"""
+                    Actúa como Jefe de Farmacia. Tienes dos tareas:
+                    
+                    1. ANALIZAR CONTEXTO: En este reporte de CENABAST:
+                    {texto_cenabast}
+                    Identifica equivalentes semánticos (sinónimos, genéricos, marcas).
+                    
+                    2. CRUCE INTELIGENTE: Busca estos críticos:
+                    {criticos['Producto'].tolist()}
+                    
+                    Usa tu conocimiento médico: si el hospital pide 'AA SALICILICO', busca 'Aspirina' o 'AAS'. 
+                    Si pide 'PARACETAMOL', busca variantes de 500mg o 1g.
+                    
+                    ENTREGA: Una tabla con: Producto Hospital | Hallazgo Semántico | Estado Real.
+                    """
+                    response = ia.generate_content(prompt)
+                    st.subheader("📋 Informe de Disponibilidad (Cruce Inteligente)")
+                    st.markdown(response.text)
+                else:
+                    st.error("❌ Error 404 persistente: No se encontró un modelo de IA disponible. Revisa la región de tu servidor Streamlit.")
                 
                 # Respaldo Técnico
                 st.divider()
@@ -63,4 +79,3 @@ if f_ssasur and f_icp:
 
             except Exception as e:
                 st.error(f"Fallo en el sistema: {e}")
-                st.info("Asegúrate de que la API Key sea válida y el modelo esté disponible.")
