@@ -14,41 +14,36 @@ st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
 # --- 2. CARGA DE ARCHIVOS ---
 col1, col2 = st.columns(2)
 with col1: f_ssasur = st.file_uploader("📥 SSASUR (CSV)", type=["csv"])
-with col2: f_icp = st.file_uploader("📦 CENABAST (Archivo: ICP-Intermediacion...)", type=["csv"])
+with col2: f_icp = st.file_uploader("📦 CENABAST (Archivo que subiste)", type=["csv"])
 
 if f_ssasur and f_icp:
-    with st.spinner('🤖 Procesando cruce de datos con IA...'):
+    with st.spinner('🤖 Sincronizando datos con IA...'):
         try:
             # Leer SSASUR
             df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
             df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
             
-            # --- AJUSTE CLAVE PARA TU ARCHIVO ---
-            # Saltamos 3 filas y usamos separador ; según tu archivo
+            # --- LIMPIEZA QUIRÚRGICA DEL ICP ---
+            # Forzamos encoding latin1 para las Ñ y tildes
             df_c = pd.read_csv(f_icp, sep=';', skiprows=3, encoding='latin1')
             
-            # Limpiamos nombres de columnas (eliminamos espacios invisibles)
-            df_c.columns = df_c.columns.str.strip()
+            # Limpiamos nombres de columnas: quitamos espacios y tildes internamente
+            df_c.columns = df_c.columns.str.strip().str.normalize('NFKD').str.encode('ascii', ignore=True).str.decode('utf-8')
             
-            # Extraemos la información relevante para que la IA la procese
-            # Usamos 'NOMBRE GENERICO', 'SEMAFORO' y 'ESTADO DEL MATERIAL'
-            columnas_ia = ['NOMBRE GENERICO', 'SEMAFORO', 'ESTADO DEL MATERIAL']
-            contexto_icp = df_c[columnas_ia].head(200).to_string(index=False)
+            # Buscamos los críticos en SSASUR
+            criticos = df_s[df_s['Saldo Meses'] < 0.5].copy().sort_values('Saldo Meses').head(12)
+            
+            # Preparamos los datos de CENABAST para la IA (usando los nuevos nombres de columna limpios)
+            contexto_icp = df_c[['NOMBRE GENERICO', 'SEMAFORO', 'ESTADO DEL MATERIAL']].head(150).to_string(index=False)
 
-            # Filtramos los críticos (< 0.5 meses)
-            criticos = df_s[df_s['Saldo Meses'] < 0.5].copy().sort_values('Saldo Meses').head(15)
-            
             if not criticos.empty:
-                st.subheader("⚠️ Estado Real en CENABAST (Análisis Semántico)")
+                st.subheader("⚠️ Análisis de Disponibilidad Real")
                 
                 def consultar_ia(farma):
                     prompt = f"""
-                    Actúa como Químico Farmacéutico. Busca el fármaco '{farma}' en esta lista de CENABAST:
+                    Busca '{farma}' en esta lista:
                     {contexto_icp}
-                    
-                    Dime qué dice en 'SEMAFORO' o 'ESTADO DEL MATERIAL'.
-                    Responde SOLO con el estado (ej: ENTREGADO, APROBADO, PENDIENTE).
-                    Si no existe en la lista, responde 'NO EN LISTA'.
+                    Dime el estado (SEMAFORO o ESTADO DEL MATERIAL). Solo una palabra. Si no está, di 'SIN INFO'.
                     """
                     try:
                         res = model.generate_content(prompt)
@@ -56,17 +51,16 @@ if f_ssasur and f_icp:
                     except:
                         return "REINTENTAR"
 
-                # Aplicamos la inteligencia al listado
                 criticos['Estado Real'] = criticos['Producto'].apply(consultar_ia)
                 
-                # Visualización con colores institucionales
+                # Visualización
                 st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Real']].style.applymap(
                     lambda x: 'background-color: #1b5e20; color: white' if x in ['ENTREGADO', 'APROBADO'] else 
-                              ('background-color: #b71c1c; color: white' if x == 'NO EN LISTA' else ''),
+                              ('background-color: #b71c1c; color: white' if x == 'SIN INFO' else ''),
                     subset=['Estado Real']
                 ))
             else:
-                st.success("✅ Todo el stock crítico está cubierto.")
+                st.success("✅ Stock bajo control.")
                 
         except Exception as e:
-            st.error(f"Error de lectura: {e}")
+            st.error(f"Error técnico: {e}. Revisa el formato del archivo.")
