@@ -3,7 +3,7 @@ import pandas as pd
 import google.generativeai as genai
 import io
 
-# --- 1. CONFIGURACIÓN IA (Gemini sigue al mando) ---
+# --- 1. CONFIGURACIÓN IA ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
@@ -18,59 +18,58 @@ with col1: f_ssasur = st.file_uploader("📥 Cargar SSASUR (CSV)", type=["csv"])
 with col2: f_icp = st.file_uploader("📦 Cargar Archivo CENABAST (CSV)", type=["csv"])
 
 if f_ssasur and f_icp:
-    with st.spinner('🤖 Gemini analizando el cumplimiento de CENABAST...'):
+    with st.spinner('🤖 Sincronizando datos con Gemini...'):
         try:
             # --- LECTURA SSASUR ---
-            # Usamos encoding latin1 por si vienen acentos en los nombres de fármacos
             df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
             df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
             
-            # --- LECTURA CENABAST (Ajustada a tu archivo real) ---
-            # Forzamos latin1, separador ; y saltamos 3 filas de títulos
+            # --- LECTURA CENABAST (A PRUEBA DE TODO) ---
+            # Leemos el archivo saltando 3 filas y forzando el separador ;
             df_c = pd.read_csv(f_icp, sep=';', skiprows=3, encoding='latin1')
             
-            # Limpiamos nombres de columnas de espacios invisibles
-            df_c.columns = [c.strip() for c in df_c.columns]
+            # Limpiamos los nombres de las columnas quitando tildes y espacios
+            df_c.columns = df_c.columns.str.strip().str.replace('É', 'E').str.replace('Ó', 'O')
             
-            # Preparamos el resumen que leerá la IA
-            # Usamos 'NOMBRE GENERICO', 'SEMAFORO' y 'ESTADO DEL MATERIAL'
-            columnas_necesarias = ['NOMBRE GENERICO', 'SEMAFORO', 'ESTADO DEL MATERIAL']
-            resumen_cenabast = df_c[columnas_necesarias].dropna(how='all').head(200).to_string(index=False)
+            # Seleccionamos las columnas clave (usando los nombres que vimos en tu archivo)
+            # NOMBRE GENERICO, SEMAFORO, ESTADO DEL MATERIAL
+            df_c_limpio = df_c[['NOMBRE GENERICO', 'SEMAFORO', 'ESTADO DEL MATERIAL']].dropna(subset=['NOMBRE GENERICO'])
+            
+            # Preparamos el texto para que la IA lo entienda
+            contexto_ia = df_c_limpio.head(150).to_string(index=False)
 
-            # Filtramos los fármacos con stock más crítico (< 0.5 meses)
+            # Filtramos los fármacos críticos
             criticos = df_s[df_s['Saldo Meses'] < 0.5].copy().sort_values('Saldo Meses').head(12)
             
             if not criticos.empty:
-                st.subheader("⚠️ Estado Real de Fármacos Críticos (Cruce IA)")
+                st.subheader("⚠️ Estado Real en CENABAST (Cruce IA)")
                 
-                def consultar_ia(farma_hospital):
-                    # Aquí Gemini hace la magia de comparar nombres técnicos
+                def consultar_ia(farma):
                     prompt = f"""
-                    Actúa como experto en farmacia clínica. En base a esta lista de CENABAST:
-                    {resumen_cenabast}
+                    Actúa como Q.F. En base a esta lista de CENABAST:
+                    {contexto_ia}
                     
-                    ¿Cuál es el estado de gestión de '{farma_hospital}'? 
-                    Busca por coincidencia de nombre (ej: A.A SALICILIC es ASPIRINA).
-                    Responde SOLO con lo que dice en 'SEMAFORO' o 'ESTADO DEL MATERIAL'.
-                    Si no está, responde 'SIN REGISTRO'. Solo una palabra o frase corta.
+                    ¿Cuál es el estado de '{farma}'? 
+                    Dime lo que sale en SEMAFORO o ESTADO DEL MATERIAL.
+                    Si no está, responde 'SIN REGISTRO'. Solo una palabra.
                     """
                     try:
-                        response = model.generate_content(prompt)
-                        return response.text.strip().upper()
+                        res = model.generate_content(prompt)
+                        return res.text.strip().upper()
                     except:
-                        return "ERROR IA"
+                        return "REINTENTAR"
 
-                # Ejecutar la consulta para cada crítico
-                criticos['Estado en CENABAST'] = criticos['Producto'].apply(consultar_ia)
+                criticos['Estado Real'] = criticos['Producto'].apply(consultar_ia)
                 
-                # Visualización con colores de gestión
-                st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado en CENABAST']].style.applymap(
-                    lambda x: 'background-color: #1b5e20; color: white' if any(palabra in str(x) for palabra in ['ENTREGADO', 'APROBADO', 'PROGRAMADO']) else 
+                # Visualización con colores
+                st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Real']].style.applymap(
+                    lambda x: 'background-color: #1b5e20; color: white' if any(p in str(x) for p in ['ENTREGADO', 'APROBADO']) else 
                               ('background-color: #b71c1c; color: white' if 'SIN' in str(x) else ''),
-                    subset=['Estado en CENABAST']
+                    subset=['Estado Real']
                 ))
             else:
-                st.success("✅ No hay fármacos bajo el nivel crítico de 0.5 meses.")
+                st.success("✅ Stock saludable.")
                 
         except Exception as e:
-            st.error(f"Error técnico: {e}. Asegúrate de subir el archivo CSV original de Cenabast.")
+            st.error(f"Error detectado: {e}")
+            st.info("Asegúrate de que el archivo de Cenabast sea el mismo que me enviaste (separado por punto y coma).")
