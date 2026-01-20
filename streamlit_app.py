@@ -1,33 +1,61 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Radar Saavedra", layout="wide")
-st.title("🚀 Radar de Stock - Hospital Puerto Saavedra")
-st.write("Gestionado por QF Renato Rozas")
+st.set_page_config(page_title="Radar Saavedra Pro", layout="wide")
+st.title("🚀 Radar de Abastecimiento Inteligente")
+st.write("Hospital de Puerto Saavedra - Gestión Renato Rozas")
 
-archivo = st.file_uploader("Sube tu SSASUR para analizar", type=["csv"])
+# 1. CARGA MULTI-ARCHIVO
+archivos = st.file_uploader("Sube tus archivos (SSASUR, Arsenal, ICP)", type=["csv", "xlsx", "xlsm"], accept_multiple_files=True)
 
-if archivo:
-    try:
-        # Leemos con el formato de SSASUR
-        df = pd.read_csv(archivo, sep=";", encoding='latin1')
+if archivos:
+    data = {}
+    for f in archivos:
+        try:
+            if "resumenConsumo" in f.name:
+                df = pd.read_csv(f, sep=";", encoding='latin1')
+                df['Saldo Meses'] = pd.to_numeric(df['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
+                data['ssasur'] = df.dropna(subset=['Saldo Meses'])
+            elif "ARSENALES" in f.name:
+                data['arsenal'] = pd.read_excel(f, engine='openpyxl')
+            elif "ICP" in f.name:
+                df_icp = pd.read_csv(f, sep=";", encoding='latin1')
+                data['icp'] = pd.concat([data.get('icp', pd.DataFrame()), df_icp])
+            st.success(f"✅ Cargado: {f.name}")
+        except Exception as e:
+            st.error(f"Error en {f.name}: {e}")
+
+    # 2. PROCESAMIENTO E INTELIGENCIA
+    if 'ssasur' in data:
+        ssasur = data['ssasur']
         
-        # SOLUCIÓN AL ERROR: Convertimos 'Saldo Meses' a número, ignorando errores de texto
-        df['Saldo Meses'] = pd.to_numeric(df['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
-        df = df.dropna(subset=['Saldo Meses']) # Limpiamos filas vacías
+        # Etiquetar Arsenal
+        lista_arsenal = data['arsenal']['Descrip. Artículo'].unique() if 'arsenal' in data else []
+        ssasur['Tipo'] = ssasur['Producto'].apply(lambda x: "✅ ARSENAL" if any(p in x for p in lista_arsenal) else "⚠️ EXTRA")
         
-        st.success("¡Archivo procesado con éxito!")
+        # Cruzar con ICP (Próximas entregas)
+        lista_icp = data['icp']['Producto'].unique() if 'icp' in data else []
+        ssasur['En Camino'] = ssasur['Producto'].apply(lambda x: "🚚 SÍ" if any(p in x for p in lista_icp) else "❌ NO")
 
-        # Semáforo Inteligente
-        def color_semaforo(val):
-            if val < 0.5: return 'background-color: #ff4b4b; color: white' # Rojo
-            elif val < 1.0: return 'background-color: #ffa500; color: black' # Naranja
-            return 'background-color: #28a745; color: white' # Verde
+        # 3. FILTROS EN LA BARRA LATERAL
+        st.sidebar.header("Filtros de Control")
+        solo_arsenal = st.sidebar.checkbox("Ver solo productos de MI ARSENAL", value=False)
+        solo_criticos = st.sidebar.checkbox("Ver solo CRÍTICOS (Rojo)", value=True)
 
-        # Mostramos los resultados ordenados por los más críticos
-        st.subheader("🚨 Prioridades de Abastecimiento")
-        df_mostrar = df[['Producto', 'Saldo Actual', 'Saldo Meses']].sort_values('Saldo Meses')
-        st.dataframe(df_mostrar.style.applymap(color_semaforo, subset=['Saldo Meses']), use_container_width=True)
+        df_final = ssasur.copy()
+        if solo_arsenal: df_final = df_final[df_final['Tipo'] == "✅ ARSENAL"]
+        if solo_criticos: df_final = df_final[df_final['Saldo Meses'] < 0.5]
 
-    except Exception as e:
-        st.error(f"Error de lectura: {e}")
+        # 4. VISUALIZACIÓN
+        def color_final(row):
+            if row['Saldo Meses'] < 0.5 and row['En Camino'] == "❌ NO":
+                return ['background-color: #ff4b4b; color: white'] * len(row)
+            elif row['Saldo Meses'] < 0.5 and row['En Camino'] == "🚚 SÍ":
+                return ['background-color: #ffa500; color: black'] * len(row)
+            return [''] * len(row)
+
+        st.subheader("📋 Plan de Acción Logístico")
+        st.dataframe(df_final[['Producto', 'Saldo Actual', 'Saldo Meses', 'Tipo', 'En Camino']].style.apply(color_final, axis=1))
+
+else:
+    st.info("👋 Hola Renato. Sube el Arsenal y el SSASUR para filtrar los fármacos ocasionales.")
