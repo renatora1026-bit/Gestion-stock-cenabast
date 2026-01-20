@@ -2,71 +2,67 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- CONFIGURACIÓN ---
+# --- 1. CONEXIÓN REFORZADA (Evita Error 404) ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
-# Usamos 1.5-flash porque es más rápido para analizar bloques grandes de texto
-model = genai.GenerativeModel('gemini-1.5-flash')
 
-st.set_page_config(page_title="Radar Saavedra AI v3", layout="wide")
-st.title("🚀 Radar de Abastecimiento Inteligente")
-st.markdown(f"**Hospital Puerto Saavedra** | Sistema de Cruce Semántico")
+def obtener_cerebro():
+    # Probamos variantes para saltar el error 404 de las capturas
+    for m_name in ["gemini-1.5-flash", "gemini-pro", "models/gemini-1.5-flash"]:
+        try:
+            m = genai.GenerativeModel(m_name)
+            m.generate_content("test", generation_config={"max_output_tokens": 1})
+            return m
+        except: continue
+    return None
 
-# --- 1. CARGA INDIVIDUAL ---
+st.set_page_config(page_title="Radar Semántico Saavedra", layout="wide")
+st.title("🧠 Radar IA: Pensamiento Farmacológico")
+st.markdown("Hospital Puerto Saavedra | Gestión Semántica de Stock")
+
+# --- 2. CARGA Y PROCESAMIENTO INDIVIDUAL ---
 col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("📥 Fuente 1: SSASUR")
-    f_ssasur = st.file_uploader("Subir stock local", type=["csv"], key="ssasur")
-
-with col2:
-    st.subheader("📦 Fuente 2: CENABAST")
-    f_icp = st.file_uploader("Subir reporte ICP", type=["csv"], key="cenabast")
+with col1: f_ssasur = st.file_uploader("📥 1. Cargar SSASUR", type=["csv"])
+with col2: f_icp = st.file_uploader("📦 2. Cargar CENABAST", type=["csv"])
 
 if f_ssasur and f_icp:
-    if st.button("🧠 Iniciar Procesamiento con Pensamiento IA"):
-        with st.spinner('🤖 Gemini está "leyendo" y entendiendo tus archivos...'):
+    if st.button("🚀 Iniciar Cruce de Conceptos Inteligentes"):
+        with st.spinner('🤖 Gemini creando base de datos semántica...'):
             try:
-                # Paso 1: Extraer texto de SSASUR para identificar críticos
+                # Paso A: Limpieza de nombres locales
                 df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
                 df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
-                criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(15)
-                lista_hospital = criticos['Producto'].tolist()
-
-                # Paso 2: Extraer texto de CENABAST (como bloque de conocimiento)
+                criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(12)
+                
+                # Paso B: La IA "lee" CENABAST y genera su propia base de equivalencias
                 texto_cenabast = f_icp.getvalue().decode('latin1', errors='ignore')[:25000]
+                
+                cerebro = obtener_cerebro()
+                if cerebro:
+                    prompt = f"""
+                    Actúa como un experto Químico Farmacéutico.
+                    
+                    DATOS CENABAST:
+                    {texto_cenabast}
+                    
+                    TAREA:
+                    Busca equivalentes para estos fármacos críticos: {criticos['Producto'].tolist()}
+                    
+                    INSTRUCCIÓN DE PENSAMIENTO:
+                    - Si el hospital pide 'AA SALICILICO', busca 'Aspirina', 'AAS', 'Ácido Acetilsalicílico'.
+                    - Si pide 'PARACETAMOL', busca marcas comerciales o combinaciones.
+                    - Genera una tabla: Fármaco Local | Equivalente en CENABAST | Estado (Semaforo) | Nota.
+                    """
+                    
+                    resultado = cerebro.generate_content(prompt)
+                    st.subheader("📋 Resultado del Análisis Semántico")
+                    st.markdown(resultado.text)
+                else:
+                    st.error("❌ Error de Conexión (404): No se pudo encontrar un modelo de IA activo.")
 
-                # Paso 3: El "Pensamiento" de Gemini
-                # Aquí le pedimos que haga el mapeo mental que tú sugeriste
-                prompt = f"""
-                Eres un Químico Farmacéutico experto en bases de datos.
-                
-                CONTEXTO CENABAST (Datos brutos):
-                {texto_cenabast}
-                
-                LISTA DE NECESIDADES DEL HOSPITAL:
-                {lista_hospital}
-                
-                TAREA:
-                1. Analiza los nombres en la lista del hospital.
-                2. Busca sus equivalentes en el texto de CENABAST, considerando sinónimos, nombres genéricos, 
-                   abreviaturas (ej: AA Salicilico = Aspirina) y errores de digitación.
-                3. Para cada acierto, extrae el ESTADO o SEMAFORO.
-                
-                ENTREGA:
-                Una tabla comparativa con: Fármaco Hospital | Nombre encontrado en CENABAST | Estado Real | Acción sugerida.
-                """
-
-                response = model.generate_content(prompt)
-
-                # Visualización del resultado
                 st.divider()
-                st.subheader("📋 Informe de Cruce Semántico (IA)")
-                st.markdown(response.text)
-                
-                with st.expander("Ver datos técnicos procesados"):
-                    st.write("Fármacos críticos detectados en SSASUR:", lista_hospital)
-                    st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses']])
+                st.subheader("📉 Resumen Técnico Local")
+                st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses']])
 
             except Exception as e:
-                st.error(f"Hubo un problema al procesar los archivos: {e}")
+                st.error(f"Error en el proceso: {e}")
