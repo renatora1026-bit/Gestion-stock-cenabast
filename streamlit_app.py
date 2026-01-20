@@ -4,6 +4,7 @@ import google.generativeai as genai
 import io
 
 # --- 1. CONFIGURACIÓN IA ---
+# Mantengo tu llave actual
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
@@ -30,7 +31,7 @@ if f_ssasur and f_icp:
             
             # Usamos índices numéricos (0 es la primera columna):
             # Columna 0: SEMAFORO | Columna 10: NOMBRE GENERICO | Columna 11: ESTADO DEL MATERIAL
-            # Esto evita el error de "KeyError" porque no usamos nombres
+            # Esto evita el error de "KeyError" porque no usamos nombres de texto
             df_c_limpio = df_c.iloc[:, [0, 10, 11]].copy()
             df_c_limpio.columns = ['ESTADO_SEM', 'PRODUCTO_CEN', 'ESTADO_MAT']
             
