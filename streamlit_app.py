@@ -2,68 +2,70 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- 1. CONFIGURACIÓN DE CONEXIÓN TOTAL ---
+# --- 1. CONFIGURACIÓN DE SEGURIDAD ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 
-# Función para encontrar qué modelo está vivo en tu servidor
-def obtener_modelo():
-    # Probamos nombres comunes para saltar el error 404 de las fotos
-    for nombre in ["models/gemini-1.5-flash", "models/gemini-pro", "gemini-1.5-flash", "gemini-pro"]:
+# Función para probar múltiples nombres de modelo (evita el error 404)
+def conectar_ia():
+    modelos_a_probar = ["gemini-1.5-flash", "gemini-pro"]
+    for m_name in modelos_a_probar:
         try:
-            m = genai.GenerativeModel(nombre)
-            # Prueba rápida de conexión
-            m.generate_content("hola", generation_config={"max_output_tokens": 1})
+            m = genai.GenerativeModel(m_name)
+            # Prueba de vida mínima
+            m.generate_content("test", generation_config={"max_output_tokens": 1})
             return m
         except:
             continue
     return None
 
-st.set_page_config(page_title="Radar Saavedra AI", layout="wide")
+st.set_page_config(page_title="Radar Saavedra v4", layout="wide")
 st.title("🚀 Radar de Abastecimiento + IA")
-st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
+st.markdown("**Hospital Puerto Saavedra** | Gestión de Stock Crítico")
 
-# --- 2. CARGA DE DATOS ---
-f_ssasur = st.file_uploader("📥 1. Cargar SSASUR", type=["csv"])
-f_icp = st.file_uploader("📦 2. Cargar CENABAST", type=["csv"])
+# --- 2. CARGA DE ARCHIVOS ---
+f_ssasur = st.file_uploader("📥 1. Sube SSASUR (CSV)", type=["csv"])
+f_icp = st.file_uploader("📦 2. Sube CENABAST (CSV)", type=["csv"])
 
 if f_ssasur and f_icp:
-    # Mostramos que los archivos están listos antes del "paso extra"
-    st.success("✅ Archivos cargados. ¿Iniciamos el cruce inteligente?")
+    st.success("✅ Archivos listos para el cruce inteligente.")
     
-    if st.button("🔍 ANALIZAR Y CRUZAR DATOS"):
-        with st.spinner('🤖 Buscando conexión con Gemini y cruzando datos...'):
+    if st.button("🔍 ANALIZAR DISPONIBILIDAD REAL"):
+        with st.spinner('🤖 Procesando datos y conectando con Gemini...'):
             try:
-                # Lectura de SSASUR
+                # Procesar SSASUR
                 df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
                 df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
+                
+                # Filtrar los 12 más críticos
                 criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(12)
-                
-                # Paso extra: Lectura de CENABAST como texto para Gemini
-                texto_cenabast = f_icp.getvalue().decode('latin1', errors='ignore')[:20000]
+                lista_busqueda = criticos['Producto'].tolist()
 
-                # Intentamos conectar con la IA
-                model = obtener_modelo()
+                # Leer CENABAST como texto (para evitar el error de columnas)
+                texto_cenabast = f_icp.getvalue().decode('latin1', errors='ignore')[:25000]
+
+                # Intentar conexión con la IA
+                ia = conectar_ia()
                 
-                if model:
+                if ia:
                     prompt = f"""
                     Analiza este reporte de CENABAST:
                     {texto_cenabast}
                     
-                    Y busca el estado de estos fármacos: {criticos['Producto'].tolist()}
-                    
-                    Responde con una tabla: Fármaco | Estado Real | Observación.
+                    Busca el estado de estos productos: {lista_busqueda}
+                    Responde con una tabla: Producto | Estado en CENABAST | Detalle.
+                    Si no está, pon 'Sin info'.
                     """
-                    response = model.generate_content(prompt)
-                    
-                    st.subheader("📋 Informe Consolidado")
-                    st.markdown(response.text)
+                    resultado = ia.generate_content(prompt)
+                    st.subheader("📋 Informe de Disponibilidad Real")
+                    st.markdown(resultado.text)
                 else:
-                    st.error("❌ Error 404 persistente: No se encontró un modelo de IA disponible en esta región.")
+                    st.error("❌ Error de Conexión: La IA no responde. Revisa la versión de la librería en requirements.txt")
                 
+                # Siempre mostrar la tabla de SSASUR como respaldo
                 st.divider()
-                st.subheader("📉 Datos Críticos Detectados")
+                st.subheader("📉 Resumen de Stock Local (SSASUR)")
                 st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses']])
 
             except Exception as e:
-                st.error(f"Error en el proceso: {e}")
+                st.error(f"Fallo en el procesamiento: {e}")
