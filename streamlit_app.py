@@ -1,89 +1,70 @@
 import streamlit as st
 import pandas as pd
+import google.generativeai as genai
+import io
 
-st.set_page_config(page_title="Radar Saavedra Pro", layout="wide")
-st.title("🚀 Radar de Abastecimiento - Hospital Puerto Saavedra")
+# --- 1. CONFIGURACIÓN IA (CON TU CLAVE) ---
+API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
+genai.configure(api_key=API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- 1. CARGA DE ARCHIVOS ---
-col1, col2, col3 = st.columns(3)
+st.set_page_config(page_title="Radar Saavedra AI", layout="wide")
+st.title("🚀 Radar de Abastecimiento + IA")
+st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
+
+# --- 2. CARGA DE ARCHIVOS ---
+col1, col2 = st.columns(2)
 with col1: f_ssasur = st.file_uploader("📥 SSASUR (CSV)", type=["csv"])
-with col2: f_icp = st.file_uploader("📦 CENABAST (CSV)", type=["csv"])
-with col3: f_arsenal = st.file_uploader("📋 ARSENAL (Excel)", type=["xlsx"])
+with col2: f_icp = st.file_uploader("📦 CENABAST (CSV o Excel)", type=["csv", "xlsx"])
 
-data_ssasur = None
-data_icp = None
-
-# --- 2. PROCESAMIENTO SSASUR ---
-if f_ssasur:
-    try:
-        df = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
-        df['Saldo Meses'] = pd.to_numeric(df['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
-        data_ssasur = df.dropna(subset=['Saldo Meses'])
-        st.success("✅ SSASUR cargado")
-    except Exception as e:
-        st.error(f"Error SSASUR: {e}")
-
-# --- 3. PROCESAMIENTO CENABAST (Buscador Flexible) ---
-if f_icp:
-    try:
-        f_icp.seek(0)
-        df_full = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', header=None, on_bad_lines='skip')
-        
-        # Localizamos la fila de encabezados
-        row_idx = None
-        for i, row in df_full.iterrows():
-            if any('NOMBRE GEN' in str(cell).upper() or 'PRODUCTO' in str(cell).upper() for cell in row):
-                row_idx = i
-                break
-        
-        if row_idx is not None:
-            f_icp.seek(0)
-            data_icp = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', skiprows=row_idx, on_bad_lines='skip')
-            data_icp.columns = [str(c).upper().strip() for c in data_icp.columns]
-            st.success("✅ ICP Cenabast sincronizado")
-        else:
-            st.error("🚨 No se detectó la tabla. Revisa que el archivo sea el CSV correcto.")
-    except Exception as e:
-        st.error(f"Error de lectura: {e}")
-
-# --- 4. CRUCE INTELIGENTE Y DASHBOARD ---
-if data_ssasur is not None:
-    st.divider()
-    resumen = data_ssasur.copy()
-    resumen['Producto'] = resumen['Producto'].str.upper().str.strip()
-
-    if data_icp is not None:
-        try:
-            # Columnas clave del ICP
-            col_prod_icp = [c for c in data_icp.columns if any(k in c for k in ['NOMBRE', 'GENERICO', 'PRODUCTO'])][0]
-            col_est_icp = [c for c in data_icp.columns if any(k in c for k in ['ESTADO', 'SEMAFORO', 'STATUS'])][0]
-            
-            # Limpieza exhaustiva de datos de Cenabast
-            data_icp[col_prod_icp] = data_icp[col_prod_icp].astype(str).str.upper().str.strip()
-            
-            # Función de búsqueda "Fuzzy" (Coincidencia por la primera palabra clave)
-            def buscar_estado_flexible(prod_ssasur):
-                # Sacamos solo la primera palabra (ej: "FLUOXETINA") para máxima compatibilidad
-                palabra_clave = str(prod_ssasur).split()[0]
-                mask = data_icp[col_prod_icp].str.contains(palabra_clave, na=False, regex=False)
-                match = data_icp[mask]
-                
-                if not match.empty:
-                    # Si hay varias, priorizamos la que tenga el nombre más largo (más específica)
-                    return match.sort_values(by=col_prod_icp, key=lambda x: x.str.len(), ascending=False)[col_est_icp].iloc[0]
-                return "No en ICP"
-
-            resumen['Estado Cenabast'] = resumen['Producto'].apply(buscar_estado_flexible)
-        except:
-            resumen['Estado Cenabast'] = "Error en Cruce"
-
-    st.subheader("📋 Gestión de Stock Crítico - Hospital Puerto Saavedra")
-    cols_v = ['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Cenabast']
+# --- 3. FUNCIÓN DE CRUCE SEMÁNTICO CON IA ---
+def consultar_ia_estado(producto, contexto_icp):
+    """Gemini analiza si el producto existe aunque cambie el nombre"""
+    prompt = f"""
+    Eres un Q.F. experto en logística. Revisa si '{producto}' está en esta lista de CENABAST:
+    {contexto_icp}
     
-    # Formateo visual: Rojo para stock crítico (< 0.5 meses)
-    st.dataframe(
-        resumen[cols_v].sort_values('Saldo Meses').style.applymap(
-            lambda x: 'background-color: #ff4b4b; color: white' if isinstance(x, float) and x < 0.5 else '', 
-            subset=['Saldo Meses']
-        )
-    )
+    Responde solo con el ESTADO (ej: ENTREGADO, APROBADO, NO EN LISTA). 
+    Sé flexible con los nombres (ej: 'PNC' es 'PENICILINA').
+    """
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except:
+        return "Error de Conexión"
+
+# --- 4. PROCESAMIENTO ---
+if f_ssasur and f_icp:
+    with st.spinner('🤖 Gemini está cruzando los datos...'):
+        try:
+            # Procesar SSASUR
+            df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
+            df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
+            
+            # Procesar CENABAST (IA lee las primeras 50 filas)
+            if f_icp.name.endswith('csv'):
+                df_c = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip').head(50)
+            else:
+                df_c = pd.read_excel(f_icp).head(50)
+            
+            contexto_icp = df_c.to_string()
+
+            # Solo aplicar IA a los Críticos (< 0.5 meses) para que sea rápido
+            criticos = df_s[df_s['Saldo Meses'] < 0.5].copy()
+            
+            if not criticos.empty:
+                st.subheader("⚠️ Análisis IA de Stock Crítico")
+                criticos['Estado Real (Cenabast)'] = criticos['Producto'].apply(
+                    lambda x: consultar_ia_estado(x, contexto_icp)
+                )
+                
+                # Mostrar resultados
+                st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Real (Cenabast)']].style.applymap(
+                    lambda x: 'background-color: #ff4b4b; color: white' if x == 'NO EN LISTA' else '', 
+                    subset=['Estado Real (Cenabast)']
+                ))
+            else:
+                st.success("✅ Todo bajo control. No hay stock crítico inmediato.")
+                
+        except Exception as e:
+            st.error(f"Error en el proceso: {e}")
