@@ -1,61 +1,91 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
 st.set_page_config(page_title="Radar Saavedra Pro", layout="wide")
-st.title("🚀 Radar de Abastecimiento Inteligente")
-st.write("Hospital de Puerto Saavedra - Gestión Renato Rozas")
+st.title("🚀 Sistema de Inteligencia de Inventario")
+st.write("Hospital de Puerto Saavedra - Área de Abastecimiento")
 
-# 1. CARGA MULTI-ARCHIVO
-archivos = st.file_uploader("Sube tus archivos (SSASUR, Arsenal, ICP)", type=["csv", "xlsx", "xlsm"], accept_multiple_files=True)
+# --- SECCIÓN DE CARGA ORGANIZADA ---
+st.header("1. Carga de Planillas")
+col1, col2, col3 = st.columns(3)
 
-if archivos:
-    data = {}
-    for f in archivos:
-        try:
-            if "resumenConsumo" in f.name:
-                df = pd.read_csv(f, sep=";", encoding='latin1')
-                df['Saldo Meses'] = pd.to_numeric(df['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
-                data['ssasur'] = df.dropna(subset=['Saldo Meses'])
-            elif "ARSENALES" in f.name:
-                data['arsenal'] = pd.read_excel(f, engine='openpyxl')
-            elif "ICP" in f.name:
-                df_icp = pd.read_csv(f, sep=";", encoding='latin1')
-                data['icp'] = pd.concat([data.get('icp', pd.DataFrame()), df_icp])
-            st.success(f"✅ Cargado: {f.name}")
-        except Exception as e:
-            st.error(f"Error en {f.name}: {e}")
+with col1:
+    st.subheader("📥 SSASUR")
+    f_ssasur = st.file_uploader("Consumo o stock (CSV)", type=["csv"], key="ssasur")
 
-    # 2. PROCESAMIENTO E INTELIGENCIA
-    if 'ssasur' in data:
-        ssasur = data['ssasur']
-        
-        # Etiquetar Arsenal
-        lista_arsenal = data['arsenal']['Descrip. Artículo'].unique() if 'arsenal' in data else []
-        ssasur['Tipo'] = ssasur['Producto'].apply(lambda x: "✅ ARSENAL" if any(p in x for p in lista_arsenal) else "⚠️ EXTRA")
-        
-        # Cruzar con ICP (Próximas entregas)
-        lista_icp = data['icp']['Producto'].unique() if 'icp' in data else []
-        ssasur['En Camino'] = ssasur['Producto'].apply(lambda x: "🚚 SÍ" if any(p in x for p in lista_icp) else "❌ NO")
+with col2:
+    st.subheader("📦 CENABAST")
+    f_icp = st.file_uploader("ICP Intermediación/PM", type=["csv", "xlsx"], key="icp")
 
-        # 3. FILTROS EN LA BARRA LATERAL
-        st.sidebar.header("Filtros de Control")
-        solo_arsenal = st.sidebar.checkbox("Ver solo productos de MI ARSENAL", value=False)
-        solo_criticos = st.sidebar.checkbox("Ver solo CRÍTICOS (Rojo)", value=True)
+with col3:
+    st.subheader("📋 ARSENAL")
+    f_arsenal = st.file_uploader("Arsenal HBC (Excel)", type=["xlsx", "xlsm"], key="arsenal")
 
-        df_final = ssasur.copy()
-        if solo_arsenal: df_final = df_final[df_final['Tipo'] == "✅ ARSENAL"]
-        if solo_criticos: df_final = df_final[df_final['Saldo Meses'] < 0.5]
+# --- PROCESAMIENTO ---
+data_ssasur = None
+data_icp = None
+data_arsenal = []
 
-        # 4. VISUALIZACIÓN
-        def color_final(row):
-            if row['Saldo Meses'] < 0.5 and row['En Camino'] == "❌ NO":
+if f_ssasur:
+    try:
+        df = pd.read_csv(f_ssasur, sep=";", encoding='latin1')
+        df['Saldo Meses'] = pd.to_numeric(df['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
+        data_ssasur = df.dropna(subset=['Saldo Meses'])
+    except Exception as e:
+        st.error(f"Error en SSASUR: {e}")
+
+if f_icp:
+    try:
+        # Los ICP de Cenabast suelen venir con codificación especial
+        data_icp = pd.read_csv(f_icp, sep=";", encoding='latin1')
+    except:
+        data_icp = pd.read_excel(f_icp)
+
+if f_arsenal:
+    df_art = pd.read_excel(f_arsenal, engine='openpyxl')
+    data_arsenal = df_art['Descrip. Artículo'].unique() if 'Descrip. Artículo' in df_art.columns else []
+
+# --- VISUALIZACIÓN Y FILTROS ---
+if data_ssasur is not None:
+    st.divider()
+    st.header("2. Radar de Disponibilidad")
+    
+    # Lógica de Cruce
+    resumen = data_ssasur.copy()
+    
+    # Filtro Arsenal
+    resumen['Es Arsenal'] = resumen['Producto'].apply(lambda x: "✅ Sí" if any(str(p).strip() in str(x).strip() for p in data_arsenal) else "❌ No")
+    
+    # Cruce con ICP para Fechas
+    if data_icp is not None:
+        # Simplificamos nombres para el cruce
+        dict_fechas = pd.Series(data_icp['Fecha Entrega Programada'].values, index=data_icp['Producto']).to_dict()
+        resumen['Próxima Entrega'] = resumen['Producto'].map(dict_fechas).fillna("Sin fecha")
+    else:
+        resumen['Próxima Entrega'] = "No cargado"
+
+    # Filtros laterales
+    solo_arsenal = st.sidebar.checkbox("Ver solo mi Arsenal", value=True)
+    if solo_arsenal:
+        resumen = resumen[resumen['Es Arsenal'] == "✅ Sí"]
+
+    # Gráfico de Torta (Tu nuevo reporte de gestión)
+    col_chart, col_table = st.columns([1, 2])
+    
+    with col_chart:
+        resumen['Estatus'] = resumen['Saldo Meses'].apply(lambda x: 'Crítico' if x < 0.5 else ('Riesgo' if x < 1.0 else 'Seguro'))
+        fig = px.pie(resumen, names='Estatus', title="Estado del Arsenal HBC", 
+                     color='Estatus', color_discrete_map={'Crítico':'#ff4b4b', 'Riesgo':'#ffa500', 'Seguro':'#28a745'})
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_table:
+        def color_logistico(row):
+            if row['Saldo Meses'] < 0.5:
                 return ['background-color: #ff4b4b; color: white'] * len(row)
-            elif row['Saldo Meses'] < 0.5 and row['En Camino'] == "🚚 SÍ":
-                return ['background-color: #ffa500; color: black'] * len(row)
             return [''] * len(row)
-
-        st.subheader("📋 Plan de Acción Logístico")
-        st.dataframe(df_final[['Producto', 'Saldo Actual', 'Saldo Meses', 'Tipo', 'En Camino']].style.apply(color_final, axis=1))
+            
+        st.dataframe(resumen[['Producto', 'Saldo Actual', 'Saldo Meses', 'Es Arsenal', 'Próxima Entrega']].style.apply(color_logistico, axis=1))
 
 else:
-    st.info("👋 Hola Renato. Sube el Arsenal y el SSASUR para filtrar los fármacos ocasionales.")
+    st.info("💡 Para comenzar, carga primero el archivo de SSASUR.")
