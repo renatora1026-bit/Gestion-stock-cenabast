@@ -16,7 +16,6 @@ data_icp = None
 # --- 2. PROCESAMIENTO SSASUR ---
 if f_ssasur:
     try:
-        # Usamos sep=None para que pandas detecte si es , o ;
         df = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
         df['Saldo Meses'] = pd.to_numeric(df['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
         data_ssasur = df.dropna(subset=['Saldo Meses'])
@@ -24,15 +23,12 @@ if f_ssasur:
     except Exception as e:
         st.error(f"Error SSASUR: {e}")
 
-# --- 3. PROCESAMIENTO CENABAST (Detección Automática) ---
+# --- 3. PROCESAMIENTO CENABAST ---
 if f_icp:
     try:
-        f_icp.seek(0)
-        # El motor 'python' con sep=None es la clave para leer CSVs de Excel Chile
+        # Leemos el archivo saltando posibles encabezados vacíos
         df_temp = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip')
-        
-        # Limpieza de encabezados vacíos del portal
-        if df_temp.shape[1] < 3: # Si detectó pocas columnas, es que el encabezado está más abajo
+        if "INFORME" in str(df_temp.columns[0]).upper() or df_temp.shape[1] < 5:
             f_icp.seek(0)
             df_temp = pd.read_csv(f_icp, sep=None, engine='python', encoding='utf-8', skiprows=4, on_bad_lines='skip')
         
@@ -40,28 +36,43 @@ if f_icp:
         data_icp.columns = [str(c).upper().strip() for c in data_icp.columns]
         st.success("✅ ICP Cenabast sincronizado")
     except Exception as e:
-        st.error(f"Error ICP: Guarda el archivo nuevamente como CSV en tu Mac.")
+        st.error("Error al procesar Cenabast.")
 
-# --- 4. DASHBOARD FINAL ---
+# --- 4. CRUCE INTELIGENTE Y DASHBOARD ---
 if data_ssasur is not None:
     st.divider()
     resumen = data_ssasur.copy()
-    resumen['Producto'] = resumen['Producto'].str.upper()
-
-    # Inicializamos la columna de estado
-    resumen['Estado Cenabast'] = "Sin información"
+    resumen['Producto'] = resumen['Producto'].str.upper().str.strip()
 
     if data_icp is not None:
-        # Buscamos columnas de Producto y Estado de forma flexible
-        col_prod = [c for c in data_icp.columns if any(k in c for k in ['NOMBRE', 'GENERICO', 'PRODUCTO'])]
-        col_est = [c for c in data_icp.columns if any(k in c for k in ['ESTADO', 'SEMAFORO', 'STATUS'])]
+        # Buscamos columnas clave
+        col_prod_icp = [c for c in data_icp.columns if any(k in c for k in ['NOMBRE', 'GENERICO', 'PRODUCTO'])][0]
+        col_estado_icp = [c for c in data_icp.columns if any(k in c for k in ['ESTADO', 'SEMAFORO', 'STATUS'])][0]
         
-        if col_prod and col_est:
-            mapa = pd.Series(data_icp[col_est[0]].values, index=data_icp[col_prod[0]].astype(str).str.upper()).to_dict()
-            resumen['Estado Cenabast'] = resumen['Producto'].map(mapa).fillna("Pendiente")
-    
-    st.subheader("📋 Gestión de Stock Crítico")
-    # Mostramos la tabla solo si tenemos las columnas listas
-    cols_mostrar = ['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Cenabast']
-    st.dataframe(resumen[cols_mostrar].sort_values('Saldo Meses').style.applymap(
+        # Limpieza de datos de Cenabast para el cruce
+        data_icp[col_prod_icp] = data_icp[col_prod_icp].astype(str).str.upper().str.strip()
+        
+        # Función de búsqueda inteligente
+        def buscar_estado(prod_ssasur):
+            # Intento 1: Coincidencia exacta
+            match = data_icp[data_icp[col_prod_icp] == prod_ssasur]
+            if not match.empty:
+                return match[col_estado_icp].iloc[0]
+            
+            # Intento 2: ¿El nombre de Cenabast está contenido en el de SSASUR?
+            # Tomamos las primeras dos palabras para buscar (ej: "FLUOXETINA 20")
+            base = " ".join(prod_ssasur.split()[:2])
+            match_parcial = data_icp[data_icp[col_prod_icp].str.contains(base, na=False)]
+            if not match_parcial.empty:
+                return match_parcial[col_estado_icp].iloc[0]
+            
+            return "Pendiente"
+
+        resumen['Estado Cenabast'] = resumen['Producto'].apply(buscar_estado)
+    else:
+        resumen['Estado Cenabast'] = "Carga ICP para ver estado"
+
+    st.subheader("📋 Prioridades de Abastecimiento")
+    cols = ['Producto', 'Saldo Actual', 'Saldo Meses', 'Estado Cenabast']
+    st.dataframe(resumen[cols].sort_values('Saldo Meses').style.applymap(
         lambda x: 'background-color: #ff4b4b; color: white' if isinstance(x, float) and x < 0.5 else '', subset=['Saldo Meses']))
