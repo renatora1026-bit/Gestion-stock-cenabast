@@ -4,10 +4,9 @@ import plotly.express as px
 import io
 
 st.set_page_config(page_title="Radar Saavedra Pro", layout="wide")
-st.title("🚀 Sistema de Inteligencia de Inventario")
-st.write("Hospital de Puerto Saavedra - Gestión Renato Rozas")
+st.title("🚀 Radar de Abastecimiento Puerto Saavedra")
 
-# --- 1. DEFINICIÓN DE BOTONES DE CARGA (Aquí estaba el error) ---
+# --- 1. CARGA DE ARCHIVOS ---
 st.header("1. Carga de Planillas")
 col1, col2, col3 = st.columns(3)
 
@@ -18,14 +17,11 @@ with col2:
 with col3:
     f_arsenal = st.file_uploader("📋 ARSENAL (Excel)", type=["xlsx", "xlsm"], key="u_arsenal")
 
-# --- 2. INICIALIZACIÓN DE VARIABLES ---
 data_ssasur = None
 data_icp = None
 data_arsenal = []
 
-# --- 3. PROCESAMIENTO ---
-
-# Lectura de SSASUR
+# --- 2. PROCESAMIENTO SSASUR ---
 if f_ssasur:
     try:
         df = pd.read_csv(f_ssasur, sep=";", encoding='latin1')
@@ -35,66 +31,59 @@ if f_ssasur:
     except Exception as e:
         st.error(f"Error SSASUR: {e}")
 
-# Lectura de ICP (El "anti-resistencia")
+# --- 3. PROCESAMIENTO ICP (El "Desbloqueador") ---
 if f_icp:
     try:
         f_icp.seek(0)
-        # Probamos primero como HTML por si es el archivo "disfrazado" de Cenabast
-        data_icp = pd.read_html(f_icp)[0]
-        st.success("✅ ICP sincronizado (Formato Web)")
+        # Intento 1: Como tabla HTML (Formato real de Cenabast)
+        # Usamos lxml para mayor tolerancia a errores
+        data_icp = pd.read_html(f_icp, flavor='lxml')[0]
+        st.success("✅ ICP sincronizado (Modo Portal)")
     except:
         try:
             f_icp.seek(0)
+            # Intento 2: Excel Estándar
             data_icp = pd.read_excel(f_icp)
-            st.success("✅ ICP sincronizado (Excel)")
+            st.success("✅ ICP sincronizado (Modo Excel)")
         except:
-            st.error("🚨 El archivo ICP sigue sin dejarse leer. Intenta guardarlo como .xlsx en tu Mac.")
+            st.warning("⚠️ Formato rebelde detectado. Intenta guardarlo como .xlsx en tu PC.")
 
-# Lectura de Arsenal
+# --- 4. PROCESAMIENTO ARSENAL ---
 if f_arsenal:
     try:
         df_art = pd.read_excel(f_arsenal)
-        # Buscamos la columna de nombre del producto
         col_nom = [c for c in df_art.columns if 'Descrip' in c or 'Artículo' in c][0]
         data_arsenal = df_art[col_nom].astype(str).str.upper().unique()
         st.success("✅ Arsenal sincronizado")
-    except Exception as e:
-        st.error(f"Error Arsenal: {e}")
+    except:
+        st.error("Error al leer el Arsenal.")
 
-# --- 4. RADAR Y FILTROS ---
+# --- 5. RADAR E INTELIGENCIA ---
 if data_ssasur is not None:
     st.divider()
     resumen = data_ssasur.copy()
     resumen['Producto'] = resumen['Producto'].str.upper()
 
-    # Filtro de Arsenal
+    # Identificar Arsenal
     resumen['Es Arsenal'] = resumen['Producto'].apply(lambda x: "✅" if any(p in x for p in data_arsenal) else "❌")
     
-    # Cruce con Fechas de ICP
+    # Unir con Fechas de ICP
     if data_icp is not None:
-        # Normalizamos nombres de columnas del ICP
         data_icp.columns = [str(c).upper() for c in data_icp.columns]
-        col_f = [c for c in data_icp.columns if 'FECHA' in c or 'ENTREGA' in c][0]
-        col_p = [c for c in data_icp.columns if 'PRODUCTO' in c or 'DESCRIP' in c][0]
+        # Buscamos columnas de Producto y Fecha
+        c_prod = [c for c in data_icp.columns if 'PRODUCTO' in c or 'DESCRIP' in c][0]
+        c_fecha = [c for c in data_icp.columns if 'FECHA' in c or 'PROGRAMADA' in c][0]
         
-        mapa_fechas = pd.Series(data_icp[col_f].values, index=data_icp[col_p].astype(str).str.upper()).to_dict()
-        resumen['Llegada'] = resumen['Producto'].map(mapa_fechas).fillna("Sin fecha")
+        mapa = pd.Series(data_icp[c_fecha].values, index=data_icp[c_prod].astype(str).str.upper()).to_dict()
+        resumen['Llegada'] = resumen['Producto'].map(mapa).fillna("Sin info")
     else:
-        resumen['Llegada'] = "Carga ICP"
+        resumen['Llegada'] = "Carga el ICP"
 
-    # Sidebar
-    solo_arsenal = st.sidebar.checkbox("Ver solo Arsenal HBC", value=True)
-    if solo_arsenal:
+    # Filtro Sidebar
+    if st.sidebar.checkbox("Ver solo Arsenal HBC", value=True):
         resumen = resumen[resumen['Es Arsenal'] == "✅"]
 
-    # Dashboard
-    col_pie, col_tabla = st.columns([1, 2])
-    with col_pie:
-        resumen['Status'] = resumen['Saldo Meses'].apply(lambda x: 'CRÍTICO' if x < 0.5 else ('RIESGO' if x < 1.0 else 'OK'))
-        fig = px.pie(resumen, names='Status', color='Status', 
-                     color_discrete_map={'CRÍTICO':'#ff4b4b', 'RIESGO':'#ffa500', 'OK':'#28a745'})
-        st.plotly_chart(fig)
-
-    with col_tabla:
-        st.dataframe(resumen[['Producto', 'Saldo Actual', 'Saldo Meses', 'Llegada']].sort_values('Saldo Meses').style.applymap(
-            lambda x: 'background-color: #ff4b4b; color: white' if isinstance(x, float) and x < 0.5 else '', subset=['Saldo Meses']))
+    # Dashboard Final
+    st.subheader("📋 Planificación de Fármacos")
+    st.dataframe(resumen[['Producto', 'Saldo Actual', 'Saldo Meses', 'Llegada']].sort_values('Saldo Meses').style.applymap(
+        lambda x: 'background-color: #ff4b4b; color: white' if isinstance(x, float) and x < 0.5 else '', subset=['Saldo Meses']))
