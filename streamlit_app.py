@@ -2,83 +2,65 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- 1. CONFIGURACIÓN DE CONEXIÓN ULTRA-ESTABLE ---
+# --- CONFIGURACIÓN DE CONEXIÓN ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 
-# Función para listar y conectar con el modelo vivo
-def conectar_ia():
-    try:
-        # Forzamos la versión flash que es la más compatible actualmente
-        model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            generation_config={"temperature": 0.1}
-        )
-        # Prueba de conexión rápida
-        model.generate_content("test", generation_config={"max_output_tokens": 1})
-        return model
-    except Exception as e:
-        # Si falla, intentamos con el nombre largo técnico
-        try:
-            return genai.GenerativeModel('models/gemini-1.5-flash')
-        except:
-            st.error(f"Error Crítico de Conexión: {e}")
-            return None
+# Usamos el nombre de modelo más universal para evitar el 404
+MODEL_NAME = 'gemini-1.5-flash'
 
-st.set_page_config(page_title="Radar Semántico v2", layout="wide")
-st.title("🧠 Radar de Abastecimiento Inteligente")
+st.set_page_config(page_title="Radar Saavedra v3", layout="wide")
+st.title("🧠 Radar IA: Pensamiento Farmacológico")
 st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
 
-# --- 2. CARGA DE ARCHIVOS ---
+# --- CARGA DE DATOS ---
 col1, col2 = st.columns(2)
-with col1: f_ssasur = st.file_uploader("📥 1. Stock Local (SSASUR)", type=["csv"])
-with col2: f_cenabast = st.file_uploader("📦 2. Disponibilidad (CENABAST)", type=["csv"])
+with col1: f_ssasur = st.file_uploader("📥 1. Stock SSASUR", type=["csv"])
+with col2: f_cenabast = st.file_uploader("📦 2. Archivo CENABAST", type=["csv"])
 
 if f_ssasur and f_cenabast:
-    # Mostramos el "Paso de Indexación" que propusiste
-    st.success("✅ Archivos listos para el análisis de variables.")
+    st.success("✅ Archivos listos para el paso de indexación.")
     
-    if st.button("🔍 INICIAR INDEXACIÓN Y CRUCE SEMÁNTICO"):
-        with st.spinner('🤖 Gemini está "pensando" las equivalencias...'):
+    if st.button("🚀 Iniciar Cruce de Conceptos Inteligentes"):
+        with st.spinner('🤖 Gemini analizando variables semánticas...'):
             try:
-                # Procesamos SSASUR para buscar los críticos de tus capturas
+                # Procesar Stock Local (SSASUR)
                 df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
                 df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
+                # Priorizamos fármacos críticos como Fluoxetina o Penicilina de tus fotos
+                criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(12)
                 
-                # Tomamos los 15 más críticos (como la Fluoxetina y Penicilina de tu foto)
-                criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(15)
-                lista_nombres = criticos['Producto'].tolist()
+                # Cargar conocimiento de CENABAST (Paso de indexación solicitado)
+                # Leemos los primeros 30k caracteres para no saturar la conexión
+                conocimiento_cenabast = f_cenabast.getvalue().decode('latin1', errors='ignore')[:30000]
 
-                # Leemos CENABAST como "base de conocimiento"
-                texto_cenabast = f_cenabast.getvalue().decode('latin1', errors='ignore')[:30000]
+                # Llamada a la IA con lógica de Químico Farmacéutico
+                model = genai.GenerativeModel(MODEL_NAME)
+                
+                prompt = f"""
+                Eres el Jefe de Farmacia del Hospital Puerto Saavedra. 
+                
+                CONOCIMIENTO DISPONIBLE (CENABAST):
+                {conocimiento_cenabast}
+                
+                PRODUCTOS CRÍTICOS A GESTIONAR:
+                {criticos['Producto'].tolist()}
+                
+                TAREA:
+                1. Analiza semánticamente los críticos. (Ej: 'AA SALICILICO' es 'Aspirina' o 'AAS').
+                2. Busca estos conceptos en el conocimiento de CENABAST.
+                3. Genera un informe con: Producto Hospital | Hallazgo en CENABAST | Estado Real.
+                """
 
-                # Conexión con la IA
-                ia = conectar_ia()
+                response = model.generate_content(prompt)
                 
-                if ia:
-                    prompt = f"""
-                    Eres un experto en farmacia hospitalaria chilena.
-                    
-                    CONTEXTO CENABAST:
-                    {texto_cenabast}
-                    
-                    PRODUCTOS A BUSCAR:
-                    {lista_nombres}
-                    
-                    TAREA:
-                    1. Para cada producto, genera sus sinónimos (ej: AA Salicilico = Aspirina = AAS).
-                    2. Busca coincidencias en el contexto de CENABAST usando estos sinónimos.
-                    3. Devuelve una tabla con: Fármaco Hospital | Match en CENABAST | Estado.
-                    """
-                    
-                    respuesta = ia.generate_content(prompt)
-                    st.subheader("📋 Informe de Cruce de Variables")
-                    st.markdown(respuesta.text)
+                st.subheader("📋 Informe de Disponibilidad (Cruce Inteligente)")
+                st.markdown(response.text)
                 
-                # Siempre mostrar la tabla local por seguridad
                 st.divider()
-                st.subheader("📉 Resumen Técnico Local (SSASUR)")
+                st.subheader("📉 Detalle Técnico Local")
                 st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses']])
 
             except Exception as e:
-                st.error(f"Fallo en el procesamiento de datos: {e}")
+                st.error(f"Error de conexión: {e}")
+                st.info("Asegúrate de haber actualizado el archivo requirements.txt en GitHub.")
