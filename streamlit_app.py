@@ -54,21 +54,22 @@ if st.session_state.criticos_texto:
                     df_c = pd.read_csv(f_cenabast, sep=';', encoding='latin1', skiprows=3)
                     
                     # Seleccionamos columnas comerciales para el cruce
+                    # Usamos 'NOMBRE COMERCIAL DEL PRODUCTO' para que la IA haga el mapeo de marcas
                     contexto = df_c[['NOMBRE GENERICO', 'NOMBRE COMERCIAL DEL PRODUCTO', 'ESTADO DEL MATERIAL']].to_string()
                     
                     prompt = f"""
-                    Eres el Jefe de Farmacia. Cruza estos datos:
+                    Eres el Jefe de Farmacia del Hospital Puerto Saavedra. Cruza estos datos:
                     
-                    QUIEBRES HOSPITAL:
+                    QUIEBRES HOSPITAL (SSASUR):
                     {st.session_state.criticos_texto}
                     
-                    CATÁLOGO CENABAST:
+                    CATÁLOGO CENABAST (Marcas y Genéricos):
                     {contexto[:25000]}
                     
                     TAREA:
-                    1. Identifica qué marca comercial en CENABAST corresponde a nuestros quiebres.
-                    2. Haz una tabla: Producto Local | Marca CENABAST | Estado de Entrega.
-                    3. Destaca en ROJO o NEGRITA si el estado es 'SUSPENSION POR DEUDA'.
+                    1. Identifica qué 'NOMBRE COMERCIAL DEL PRODUCTO' en CENABAST corresponde a nuestros quiebres locales.
+                    2. Haz una tabla clara: Producto Local | Marca en CENABAST | Estado de Entrega.
+                    3. MUY IMPORTANTE: Si el estado es 'APROBADO CON SUSPENSION POR DEUDA', márcalo en negrita o adviértelo.
                     """
                     
                     response = model.generate_content(prompt)
