@@ -1,69 +1,73 @@
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
-from google.generativeai.types import RequestOptions
 
-# --- CONEXIÓN DE ALTA COMPATIBILIDAD ---
+# --- CONFIGURACIÓN ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
-
-# Usamos el nombre base sin sufijos beta para máxima estabilidad
-# Esto soluciona el fallo de tus fotos (image_d9c846.jpg)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-st.set_page_config(page_title="Radar Saavedra v5", layout="wide")
-st.title("🧠 Radar IA: Cruce Semántico Estabilizado")
-st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
+st.set_page_config(page_title="Radar Saavedra AI", layout="wide")
+st.title("💊 Radar de Gestión: Mapeo por Nombre Comercial")
 
-# --- CARGA DE ARCHIVOS ---
-col1, col2 = st.columns(2)
-with col1: f_ssasur = st.file_uploader("📥 1. Stock SSASUR", type=["csv"])
-with col2: f_cenabast = st.file_uploader("📦 2. Reporte CENABAST", type=["csv"])
+if 'conocimiento_hospital' not in st.session_state:
+    st.session_state.conocimiento_hospital = None
 
-if f_ssasur and f_cenabast:
-    st.success("✅ Archivos listos para el análisis semántico.")
-    
-    if st.button("🚀 EJECUTAR PENSAMIENTO FARMACÉUTICO"):
-        with st.spinner('🤖 Gemini analizando variables (v1 Stable)...'):
-            try:
-                # 1. Procesar SSASUR (Priorizando críticos como Fluoxetina/Penicilina)
-                df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
-                df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
-                # Nos enfocamos en los saldos negativos de tus capturas (image_da2257.jpg)
-                criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(12)
-                
-                # 2. Cargar contexto de CENABAST
-                texto_cenabast = f_cenabast.getvalue().decode('latin1', errors='ignore')[:30000]
+# --- PASO 1: INDEXAR SSASUR ---
+st.header("1️⃣ Paso: Necesidades del Hospital (SSASUR)")
+f_ssasur = st.file_uploader("Subir Stock/Consumo", type=["csv"], key="ssasur_v2")
 
-                # 3. Lógica de "Mapeo Mental" solicitado por Renato
-                prompt = f"""
-                Actúa como un Jefe de Farmacia experto. 
-                
-                CONOCIMIENTO CENABAST:
-                {texto_cenabast}
-                
-                NECESIDADES CRÍTICAS:
-                {criticos['Producto'].tolist()}
-                
-                TAREA:
-                - Genera sinónimos y variables semánticas para cada crítico.
-                - Localiza estos conceptos en el reporte de CENABAST.
-                - Reporta: Ítem Hospital | Match en CENABAST | Estado de Compra.
-                """
+if f_ssasur:
+    if st.button("🧐 Indexar Fármacos Locales"):
+        df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
+        df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
+        # Filtramos críticos para que la IA no se pierda en datos irrelevantes
+        criticos = df_s[df_s['Saldo Meses'] < 0.8].sort_values('Saldo Meses')
+        st.session_state.conocimiento_hospital = criticos[['Producto', 'Saldo Actual', 'Saldo Meses']].to_string()
+        st.success(f"✅ Se indexaron {len(criticos)} ítems críticos.")
 
-                # Forzamos la petición a través de la versión estable de la API
-                response = model.generate_content(
-                    prompt, 
-                    request_options=RequestOptions(retry=None)
-                )
-                
-                st.subheader("📋 Informe de Disponibilidad Inteligente")
-                st.markdown(response.text)
-                
-                st.divider()
-                st.subheader("📉 Resumen Técnico Local (SSASUR)")
-                st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses']])
+# --- PASO 2: CRUCE POR NOMBRE COMERCIAL ---
+if st.session_state.conocimiento_hospital:
+    st.divider()
+    st.header("2️⃣ Paso: Cruce con Catálogo CENABAST")
+    f_cenabast = st.file_uploader("Subir Archivo CENABAST (ICP)", type=["csv"], key="icp_v2")
 
-            except Exception as e:
-                st.error(f"Error de conexión persistente: {e}")
-                st.info("Si el error 404 continúa, ve al panel lateral de Streamlit y haz clic en 'Reboot App'.")
+    if f_cenabast:
+        if st.button("🚀 Ejecutar Mapeo Comercial"):
+            with st.spinner("IA analizando marcas y moléculas..."):
+                try:
+                    # El archivo CENABAST tiene 3 líneas de título antes de la cabecera
+                    df_c = pd.read_csv(f_cenabast, sep=';', encoding='latin1', skiprows=3)
+                    
+                    # Extraemos la columna que tú definiste como clave
+                    # Usamos 'NOMBRE COMERCIAL DEL PRODUCTO' y 'ESTADO DEL MATERIAL'
+                    columnas_clave = ['NOMBRE COMERCIAL DEL PRODUCTO', 'ESTADO DEL MATERIAL', 'CANTIDAD UNITARIA A DESPACHAR']
+                    contexto_comercial = df_c[columnas_clave].to_string()
+                    
+                    prompt = f"""
+                    Eres un Químico Farmacéutico analizando el abastecimiento.
+                    
+                    MISIÓN:
+                    Buscar los siguientes fármacos del Hospital en la lista comercial de CENABAST.
+                    
+                    FÁRMACOS SOLICITADOS (Desde SSASUR):
+                    {st.session_state.conocimiento_hospital}
+                    
+                    CATÁLOGO COMERCIAL CENABAST:
+                    {contexto_comercial[:28000]}
+                    
+                    INSTRUCCIONES DE RAZONAMIENTO:
+                    1. Si el hospital pide 'AAS' o 'A.A.S', búscalo en CENABAST por su nombre comercial (ej. 'ASPIRINA').
+                    2. Si el hospital pide 'VITAMINA D', búscalo como 'COLEKAL' u otros nombres comerciales que veas en la lista.
+                    3. Genera una respuesta clara: Fármaco Local -> Nombre Comercial Encontrado -> Estado en CENABAST.
+                    """
+                    
+                    response = model.generate_content(prompt)
+                    st.subheader("📋 Resultados del Cruce Semántico")
+                    st.markdown(response.text)
+                    
+                except Exception as e:
+                    st.error(f"Error en el cruce comercial: {e}")
+
+# --- FILOSOFÍA DE TRABAJO ---
+st.sidebar.info("Renato: Al usar el 'Nombre Comercial', la IA puede detectar si un producto ya viene en camino bajo una marca específica, facilitando tu gestión de recepción.")
