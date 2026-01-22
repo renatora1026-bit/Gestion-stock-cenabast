@@ -3,76 +3,77 @@ import pandas as pd
 import google.generativeai as genai
 
 # --- CONFIGURACIÓN DE IA ---
+# Usamos 'gemini-1.5-flash-latest' para evitar el error 404 de tu imagen
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-st.set_page_config(page_title="Radar Saavedra - Inteligencia de Datos", layout="wide")
-st.title("🧠 Cerebro Logístico: Indexación y Cruce Semántico")
+st.set_page_config(page_title="Cerebro Farmacéutico Saavedra", layout="wide")
+st.title("🧠 Cerebro Logístico: Creación de Base de Datos Propia")
 
-# MEMORIA DE DATOS (Nuestra base de datos interna temporal)
-if 'db_hospital' not in st.session_state:
-    st.session_state.db_hospital = None
-if 'db_cenabast' not in st.session_state:
-    st.session_state.db_cenabast = None
+# --- BASE DE DATOS INTERNA (Memoria de Sesión) ---
+if 'memoria_hospital' not in st.session_state:
+    st.session_state.memoria_hospital = None
+if 'memoria_cenabast' not in st.session_state:
+    st.session_state.memoria_cenabast = None
 
-# --- PASO 1: INDEXAR HOSPITAL (SSASUR) ---
-st.header("1️⃣ Crear Base de Datos Local (SSASUR)")
-f_ssasur = st.file_uploader("Cargar Planilla de Stock/Consumos", type=["csv"], key="u_ssasur")
+# --- PASO 1: INDEXAR SSASUR ---
+st.header("1️⃣ Cargar y Aprender: Hospital (SSASUR)")
+f1 = st.file_uploader("Sube el archivo de Stock", type=["csv"], key="ssasur_upload")
 
-if f_ssasur and st.button("📥 Paso 1: Extraer y Normalizar"):
-    with st.spinner("IA analizando y agrupando conceptos del hospital..."):
-        df = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
-        # Enviamos los nombres de los productos a la IA para que "entienda" qué son
-        lista_productos = df.iloc[:, 0].dropna().unique().tolist() # Asumiendo columna 1 es producto
-        
-        prompt_norm = f"Analiza esta lista de fármacos y extrae su principio activo puro, sin dosis ni formatos: {lista_productos[:100]}"
-        res = model.generate_content(prompt_norm)
-        
-        st.session_state.db_hospital = df.to_string()
-        st.success("✅ Base de datos local creada con éxito.")
+if f1 and st.button("📥 Indexar Datos Hospital"):
+    try:
+        df1 = pd.read_csv(f1, sep=None, engine='python', encoding='latin1')
+        # La IA extrae los datos y crea su "base de conocimiento"
+        st.session_state.memoria_hospital = df1.to_string()
+        st.success("✅ Datos del Hospital guardados en la base de datos interna.")
+    except Exception as e:
+        st.error(f"Error al indexar hospital: {e}")
 
-# --- PASO 2: INDEXAR CENABAST (ICP) ---
-if st.session_state.db_hospital:
+# --- PASO 2: INDEXAR CENABAST ---
+if st.session_state.memoria_hospital:
     st.divider()
-    st.header("2️⃣ Crear Base de Datos Externa (CENABAST)")
-    f_cenabast = st.file_uploader("Cargar Planilla CENABAST", type=["csv"], key="u_cenabast")
+    st.header("2️⃣ Cargar y Aprender: Proveedor (CENABAST)")
+    f2 = st.file_uploader("Sube el archivo ICP", type=["csv"], key="cenabast_upload")
     
-    if f_cenabast and st.button("📥 Paso 2: Extraer y Mapear Marcas"):
-        with st.spinner("IA analizando marcas comerciales y genéricos de CENABAST..."):
-            # Usamos el separador ';' y saltamos 3 líneas como vimos en tu archivo
-            df_c = pd.read_csv(f_cenabast, sep=';', encoding='latin1', skiprows=3)
-            # Guardamos el mapeo de Nombre Genérico vs Nombre Comercial
-            st.session_state.db_cenabast = df_c[['NOMBRE GENERICO', 'NOMBRE COMERCIAL DEL PRODUCTO', 'ESTADO DEL MATERIAL']].to_string()
-            st.success("✅ Base de datos de CENABAST indexada.")
+    if f2 and st.button("📥 Indexar Datos CENABAST"):
+        try:
+            # Saltamos 3 líneas por los títulos del ICP
+            df2 = pd.read_csv(f2, sep=';', encoding='latin1', skiprows=3)
+            # Guardamos marcas comerciales y genéricos
+            st.session_state.memoria_cenabast = df2[['NOMBRE GENERICO', 'NOMBRE COMERCIAL DEL PRODUCTO', 'ESTADO DEL MATERIAL']].to_string()
+            st.success("✅ Datos de CENABAST indexados con éxito.")
+        except Exception as e:
+            st.error(f"Error al indexar CENABAST: {e}")
 
-# --- PASO 3: EL CRUCE FINAL ---
-if st.session_state.db_hospital and st.session_state.db_cenabast:
+# --- PASO 3: CRUCE DE BASES DE DATOS ---
+if st.session_state.memoria_hospital and st.session_state.memoria_cenabast:
     st.divider()
-    st.header("3️⃣ Cruce de Información e Inteligencia")
-    if st.button("🚀 Ejecutar Cruce Semántico Final"):
-        with st.spinner("Cruzando ambas bases de datos..."):
-            prompt_final = f"""
-            Actúa como un Químico Farmacéutico experto en bases de datos.
+    st.header("3️⃣ Cruce Semántico Final")
+    if st.button("🚀 Comparar Bases de Datos"):
+        with st.spinner("La IA está razonando las equivalencias..."):
+            prompt = f"""
+            Actúa como un experto en logística farmacéutica.
             
-            BASE DE DATOS HOSPITAL:
-            {st.session_state.db_hospital[:15000]}
+            BASE DATOS A (Hospital):
+            {st.session_state.memoria_hospital[:15000]}
             
-            BASE DE DATOS CENABAST:
-            {st.session_state.db_cenabast[:20000]}
+            BASE DATOS B (CENABAST):
+            {st.session_state.memoria_cenabast[:15000]}
             
             TAREA:
-            1. Cruza ambas bases de datos. No busques nombres idénticos, busca conceptos (ej: si hospital pide AAS, busca en CENABAST por 'ACIDO ACETILSALICILICO' o 'ASPIRINA').
-            2. Genera una tabla: Fármaco Local | Coincidencia en CENABAST (Genérico/Marca) | Estado actual.
-            3. Indica si hay discrepancias de nombres para mejorar la base de datos futura.
+            1. Analiza qué fármacos del Hospital faltan (Saldo < 1).
+            2. Busca equivalencias en CENABAST por 'NOMBRE COMERCIAL' (Ej: AAS = Aspirina).
+            3. Crea una tabla: Producto Local | Coincidencia CENABAST | Estado Entrega.
+            4. Destaca si hay SUSPENSIÓN POR DEUDA.
             """
-            
-            response = model.generate_content(prompt_final)
-            st.subheader("📋 Informe de Abastecimiento Resultante")
-            st.markdown(response.text)
+            try:
+                response = model.generate_content(prompt)
+                st.markdown(response.text)
+            except Exception as e:
+                st.error(f"Error en el razonamiento de la IA: {e}")
 
-# Reinicio
-if st.sidebar.button("🗑️ Borrar Bases de Datos"):
-    st.session_state.db_hospital = None
-    st.session_state.db_cenabast = None
+if st.sidebar.button("🗑️ Resetear Cerebro"):
+    st.session_state.memoria_hospital = None
+    st.session_state.memoria_cenabast = None
     st.rerun()
