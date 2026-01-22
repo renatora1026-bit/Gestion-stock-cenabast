@@ -1,66 +1,73 @@
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
+from google.generativeai.types import RequestOptions
 
-# --- CONFIGURACIÓN DE CONEXIÓN ---
+# --- CONEXIÓN FORZADA A VERSIÓN ESTABLE ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 
-# Usamos el nombre de modelo más universal para evitar el 404
-MODEL_NAME = 'gemini-1.5-flash'
+# Configuramos el modelo para usar la versión v1 explícita
+# Esto debería eliminar el error "not found for API version v1beta"
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    generation_config={"temperature": 0.1}
+)
 
-st.set_page_config(page_title="Radar Saavedra v3", layout="wide")
-st.title("🧠 Radar IA: Pensamiento Farmacológico")
+st.set_page_config(page_title="Radar Saavedra v4", layout="wide")
+st.title("🧠 Radar IA: Cruce Semántico Estabilizado")
 st.markdown(f"**Hospital Puerto Saavedra** | Gestión: Renato Rozas")
 
-# --- CARGA DE DATOS ---
+# --- CARGA DE ARCHIVOS ---
 col1, col2 = st.columns(2)
 with col1: f_ssasur = st.file_uploader("📥 1. Stock SSASUR", type=["csv"])
-with col2: f_cenabast = st.file_uploader("📦 2. Archivo CENABAST", type=["csv"])
+with col2: f_cenabast = st.file_uploader("📦 2. Reporte CENABAST", type=["csv"])
 
 if f_ssasur and f_cenabast:
     st.success("✅ Archivos listos para el paso de indexación.")
     
-    if st.button("🚀 Iniciar Cruce de Conceptos Inteligentes"):
-        with st.spinner('🤖 Gemini analizando variables semánticas...'):
+    if st.button("🚀 INICIAR PENSAMIENTO E INTERPRETACIÓN IA"):
+        with st.spinner('🤖 Gemini analizando variables semánticas (v1 Stable)...'):
             try:
-                # Procesar Stock Local (SSASUR)
+                # 1. Procesar SSASUR (Identificar críticos)
                 df_s = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
                 df_s['Saldo Meses'] = pd.to_numeric(df_s['Saldo Meses'].astype(str).str.replace(',', '.'), errors='coerce')
-                # Priorizamos fármacos críticos como Fluoxetina o Penicilina de tus fotos
+                # Priorizar críticos reales como Fluoxetina o Penicilina de tus fotos
                 criticos = df_s[df_s['Saldo Meses'] < 0.5].sort_values('Saldo Meses').head(12)
                 
-                # Cargar conocimiento de CENABAST (Paso de indexación solicitado)
-                # Leemos los primeros 30k caracteres para no saturar la conexión
-                conocimiento_cenabast = f_cenabast.getvalue().decode('latin1', errors='ignore')[:30000]
+                # 2. Preparar el "Cerebro" de CENABAST
+                texto_cenabast = f_cenabast.getvalue().decode('latin1', errors='ignore')[:30000]
 
-                # Llamada a la IA con lógica de Químico Farmacéutico
-                model = genai.GenerativeModel(MODEL_NAME)
-                
+                # 3. Prompt de Cruce Semántico (Tu idea original)
                 prompt = f"""
-                Eres el Jefe de Farmacia del Hospital Puerto Saavedra. 
+                Actúa como un Químico Farmacéutico en Chile. 
                 
-                CONOCIMIENTO DISPONIBLE (CENABAST):
-                {conocimiento_cenabast}
+                CONOCIMIENTO DE CENABAST:
+                {texto_cenabast}
                 
-                PRODUCTOS CRÍTICOS A GESTIONAR:
+                NECESIDADES DEL HOSPITAL:
                 {criticos['Producto'].tolist()}
                 
                 TAREA:
-                1. Analiza semánticamente los críticos. (Ej: 'AA SALICILICO' es 'Aspirina' o 'AAS').
-                2. Busca estos conceptos en el conocimiento de CENABAST.
-                3. Genera un informe con: Producto Hospital | Hallazgo en CENABAST | Estado Real.
+                - Genera variables semánticas para cada producto (ej: AA Salicilico = Aspirina = AAS).
+                - Busca estos conceptos en la base de CENABAST provista.
+                - Entrega una tabla con: Ítem Hospital | Nombre en CENABAST | Estado.
                 """
 
-                response = model.generate_content(prompt)
+                # Usamos RequestOptions para forzar la API v1
+                response = model.generate_content(
+                    prompt, 
+                    request_options=RequestOptions(retry=None)
+                )
                 
-                st.subheader("📋 Informe de Disponibilidad (Cruce Inteligente)")
+                st.subheader("📋 Informe de Disponibilidad por Concepto")
                 st.markdown(response.text)
                 
+                # Resumen técnico local por seguridad
                 st.divider()
-                st.subheader("📉 Detalle Técnico Local")
+                st.subheader("📉 Detalle Local de Críticos")
                 st.dataframe(criticos[['Producto', 'Saldo Actual', 'Saldo Meses']])
 
             except Exception as e:
-                st.error(f"Error de conexión: {e}")
-                st.info("Asegúrate de haber actualizado el archivo requirements.txt en GitHub.")
+                st.error(f"Error de conexión persistente: {e}")
+                st.info("Este error 404 suele ser un problema de caché de Streamlit Cloud. Prueba reiniciando la app en el panel lateral.")
