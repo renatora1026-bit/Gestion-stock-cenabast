@@ -2,67 +2,82 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- CONFIGURACIÓN DE IA ---
+# --- CONFIGURACIÓN IA ---
 API_KEY = "AIzaSyBN6sd1xDS8fPfgEBGn9XNh_E-iSd7jAR8"
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-st.set_page_config(page_title="Radar Saavedra Final", layout="wide")
-st.title("🧠 Radar de Abastecimiento Puerto Saavedra")
+st.set_page_config(page_title="Radar Saavedra AI", layout="wide")
+st.title("💊 Radar de Abastecimiento: Hospital Puerto Saavedra")
 
-# Usamos memoria de sesión para separar los archivos
-if 'archivo_1_datos' not in st.session_state:
-    st.session_state.archivo_1_datos = None
+# Usamos session_state para que los datos sobrevivan al cambio de archivo
+if 'criticos_texto' not in st.session_state:
+    st.session_state.criticos_texto = None
 
-# --- BLOQUE 1: SSASUR ---
-st.header("1️⃣ Paso: Cargar Consumos (SSASUR)")
-f1 = st.file_uploader("Sube el archivo de Stock/Consumos", type=["csv"], key="f1")
+# --- PASO 1: SSASUR ---
+st.header("1️⃣ Paso: Analizar Stock Local (SSASUR)")
+f_ssasur = st.file_uploader("Sube el archivo de Stock o Consumos", type=["csv"], key="ssasur")
 
-if f1 and st.session_state.archivo_1_datos is None:
-    if st.button("💾 Guardar Necesidades"):
+if f_ssasur and st.session_state.criticos_texto is None:
+    if st.button("🧐 Procesar e Identificar Quiebres"):
         try:
-            df1 = pd.read_csv(f1, sep=None, engine='python', encoding='latin1')
-            # Buscamos cualquier columna que contenga "Producto" y "Saldo"
-            col_prod = [c for c in df1.columns if 'Producto' in c][0]
-            st.session_state.archivo_1_datos = df1[[col_prod]].head(20).to_string()
-            st.success("✅ Necesidades guardadas en memoria.")
-            st.rerun()
+            # Leemos intentando detectar el separador automáticamente
+            df = pd.read_csv(f_ssasur, sep=None, engine='python', encoding='latin1')
+            
+            # Buscamos la columna de Saldo sin importar mayúsculas
+            col_saldo = [c for c in df.columns if 'saldo' in c.lower() and 'mes' in c.lower()]
+            col_prod = [c for c in df.columns if 'producto' in c.lower() or 'articulo' in c.lower()]
+            
+            if col_saldo and col_prod:
+                df[col_saldo[0]] = pd.to_numeric(df[col_saldo[0]].astype(str).str.replace(',', '.'), errors='coerce')
+                # Filtramos críticos
+                criticos = df[df[col_saldo[0]] < 0.8].sort_values(col_saldo[0])
+                st.session_state.criticos_texto = criticos[[col_prod[0], col_saldo[0]]].to_string()
+                st.success(f"✅ Se identificaron {len(criticos)} productos críticos. Pasando al Paso 2...")
+                st.rerun()
+            else:
+                st.error("No encontré las columnas necesarias (Producto o Saldo Meses).")
         except Exception as e:
-            st.error(f"Error en Paso 1: {e}")
+            st.error(f"Error leyendo SSASUR: {e}")
 
-# --- BLOQUE 2: CENABAST ---
-if st.session_state.archivo_1_datos is not None:
+# --- PASO 2: CENABAST ---
+if st.session_state.criticos_texto:
     st.divider()
-    st.header("2️⃣ Paso: Cargar Reporte CENABAST (ICP)")
-    f2 = st.file_uploader("Sube el archivo de CENABAST", type=["csv"], key="f2")
+    st.header("2️⃣ Paso: Cruzar con Disponibilidad CENABAST")
+    f_cenabast = st.file_uploader("Sube el archivo ICP de CENABAST", type=["csv"], key="cenabast")
     
-    if f2:
-        if st.button("🚀 Ejecutar Cruce Inteligente"):
-            with st.spinner("Gemini analizando marcas comerciales..."):
+    if f_cenabast:
+        if st.button("🚀 Ejecutar Cruce por Nombre Comercial"):
+            with st.spinner("Gemini analizando marcas comerciales y estados..."):
                 try:
-                    # Leemos CENABAST saltando los encabezados
-                    df2 = pd.read_csv(f2, sep=';', encoding='latin1', skiprows=3)
-                    # Tomamos las columnas de Marca y Estado
-                    datos_cenabast = df2[['NOMBRE COMERCIAL DEL PRODUCTO', 'ESTADO DEL MATERIAL']].to_string()
+                    # Cargamos el ICP saltando las líneas de título (usamos skiprows=4 para ir directo a los datos)
+                    df_c = pd.read_csv(f_cenabast, sep=';', encoding='latin1', skiprows=3)
+                    
+                    # Extraemos las columnas clave que vimos en tu archivo
+                    contexto = df_c[['NOMBRE COMERCIAL DEL PRODUCTO', 'ESTADO DEL MATERIAL']].to_string()
                     
                     prompt = f"""
-                    Eres Químico Farmacéutico. Cruza estos datos:
+                    Actúa como Químico Farmacéutico.
                     
-                    LO QUE NOS FALTA: {st.session_state.archivo_1_datos}
+                    PRODUCTOS EN QUIEBRE (Hospital):
+                    {st.session_state.criticos_texto}
                     
-                    MARCAS EN CENABAST: {datos_cenabast[:20000]}
+                    DATOS CENABAST (Marcas y Estados):
+                    {contexto[:28000]}
                     
                     TAREA:
-                    1. Busca qué marca de CENABAST corresponde a nuestros faltantes.
-                    2. Haz una tabla: Fármaco Local | Marca CENABAST | Estado.
-                    3. Avisa si hay 'SUSPENSION POR DEUDA'.
+                    1. Busca qué 'NOMBRE COMERCIAL' de la lista de CENABAST corresponde a los fármacos que nos faltan.
+                    2. Haz una tabla: Fármaco Local | Marca en CENABAST | Estado de Entrega.
+                    3. Si ves que dice 'SUSPENSION POR DEUDA', ponlo en negrita.
                     """
                     
-                    res = model.generate_content(prompt)
-                    st.markdown(res.text)
+                    response = model.generate_content(prompt)
+                    st.subheader("📋 Informe de Gestión de Abastecimiento")
+                    st.markdown(response.text)
+                    
                 except Exception as e:
                     st.error(f"Error en el cruce: {e}")
 
-    if st.sidebar.button("🗑️ Limpiar Memoria"):
-        st.session_state.archivo_1_datos = None
+    if st.sidebar.button("🗑️ Reiniciar Todo"):
+        st.session_state.criticos_texto = None
         st.rerun()
